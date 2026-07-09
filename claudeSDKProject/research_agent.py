@@ -9,6 +9,8 @@ Examples:
                                session so Claude can draw cross-topic comparisons.
   3. session_memory_demo     — shows how to list past sessions, retrieve their
                                messages, and resume a previous conversation.
+  4. tool_augmented_research — uses web_search and download_pdfs tools so Claude
+                               can find and read real papers during the conversation.
 """
 
 import asyncio
@@ -17,10 +19,13 @@ from claude_agent_sdk import (
     ClaudeAgentOptions,
     AssistantMessage,
     TextBlock,
+    ToolUseBlock,
+    ToolResultBlock,
     ResultMessage,
     list_sessions,
     get_session_messages,
 )
+from tools import research_tools_server
 
 SYSTEM_PROMPT = """You are a health research assistant specializing in human physiology and nutrition science.
 Provide clear, evidence-based answers to questions about how the body works, digestion, and nutrition.
@@ -36,7 +41,7 @@ def print_divider(label: str) -> None:
 
 
 async def collect_response(client: ClaudeSDKClient) -> str:
-    """Iterate receive_response(), print and return the assistant's text."""
+    """Iterate receive_response(), print text and surface tool calls/results."""
     full_text = ""
     async for message in client.receive_response():
         if isinstance(message, AssistantMessage):
@@ -44,6 +49,10 @@ async def collect_response(client: ClaudeSDKClient) -> str:
                 if isinstance(block, TextBlock):
                     print(block.text)
                     full_text += block.text
+                elif isinstance(block, ToolUseBlock):
+                    print(f"\n[tool call → {block.name}]")
+        elif isinstance(message, ToolResultBlock):
+            print(f"[tool result received]")
         elif isinstance(message, ResultMessage) and message.subtype != "success":
             print(f"[result subtype={message.subtype}]")
     return full_text
@@ -223,6 +232,65 @@ async def session_memory_demo() -> None:
             await collect_response(client)
 
 
+# ── example 4: tool-augmented research ───────────────────────────────────────
+
+async def tool_augmented_research() -> None:
+    """
+    Equips Claude with web_search and download_pdfs tools so it can:
+      1. Search for real, recent papers on a topic.
+      2. Download any PDF links it finds to ./Research Papers/.
+      3. Summarise and critique the literature in a follow-up turn,
+         drawing on the extracted PDF text it just retrieved.
+
+    The conversation is multi-turn: Claude searches first, then reflects
+    on what it found, and finally synthesises a research summary — all
+    within one session so context accumulates across turns.
+    """
+    print_divider("EXAMPLE 4 — Tool-Augmented Research")
+    print("Claude will search the web, download PDFs, and synthesise findings.\n")
+
+    options = ClaudeAgentOptions(
+        system_prompt=SYSTEM_PROMPT,
+        mcp_servers={"research_tools": research_tools_server},
+        allowed_tools=[
+            "mcp__research_tools__web_search",
+            "mcp__research_tools__download_pdfs",
+        ],
+    )
+
+    async with ClaudeSDKClient(options=options) as client:
+        # Turn 1 — search then download every resolved PDF URL
+        print(">> Turn 1: search for papers and download PDFs")
+        await client.query(
+            "Use the web_search tool to find the 10 most relevant recent research "
+            "papers on 'protein digestion amino acid absorption mechanisms small intestine PepT1'. "
+            "The tool returns a pdf_urls list where each article URL has been resolved "
+            "to its direct PDF download link. Pass ALL of those pdf_urls to the "
+            "download_pdfs tool so every paper gets saved locally."
+        )
+        await collect_response(client)
+
+        # Turn 2 — ask Claude to reflect on what it found
+        print("\n>> Turn 2: summarise what was found")
+        await client.query(
+            "Based on the search results and any PDFs you downloaded, "
+            "give me a structured summary of the key findings: "
+            "which sources look most credible, what mechanisms they cover, "
+            "and what gaps or controversies exist in the literature?"
+        )
+        await collect_response(client)
+
+        # Turn 3 — push for a specific synthesis using the downloaded content
+        print("\n>> Turn 3: deep synthesis")
+        await client.query(
+            "From the papers you retrieved, what is the current scientific consensus "
+            "on the relative importance of PepT1 di/tripeptide transport vs. "
+            "free amino acid transporters for overall protein absorption efficiency? "
+            "Cite specific sources where possible."
+        )
+        await collect_response(client)
+
+
 # ── entry point ───────────────────────────────────────────────────────────────
 
 async def main() -> None:
@@ -232,6 +300,8 @@ async def main() -> None:
     await deep_dive_conversation()
     await comparative_analysis()
     await session_memory_demo()
+    await tool_augmented_research()
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

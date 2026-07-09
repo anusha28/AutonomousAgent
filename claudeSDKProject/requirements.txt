@@ -1,1 +1,5 @@
 claude-agent-sdk
+tavily-python
+pypdf
+python-dotenv
+httpx
