@@ -1,0 +1,26 @@
+app = "your-app-gateway"
+primary_region = "iad"
+
+[build]
+  dockerfile = "backend/gateway-node/Dockerfile"
+
+[env]
+  PORT = "8787"
+  # AI_SERVICE_URL set via: fly secrets set AI_SERVICE_URL=https://your-app-ai-service.fly.dev --config fly.gateway.toml
+
+[[services]]
+  internal_port = 8787
+  protocol = "tcp"
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [[services.http_checks]]
+    path = "/health"
+    interval = "15s"
+    timeout = "5s"
